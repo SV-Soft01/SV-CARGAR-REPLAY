@@ -67,30 +67,37 @@ struct ClipTags {
 // Clip de repetición detectado en disco
 // ---------------------------------------------------------------------------
 struct ClipInfo {
-	QString filePath;  // ruta absoluta
-	QString fileName;  // nombre con extensión (clave de etiquetas)
-	QString baseKey;   // nombre sin extensión ni sufijo de cámara
-	QString groupKey;  // identifica la "toma" multi-ángulo (ruta del primer clip del grupo)
-	int camera = 0;    // 0 = Principal (buffer estándar de OBS), N = _CAMN
+	QString filePath;       // ruta absoluta
+	QString fileName;       // nombre con extensión (clave de etiquetas)
+	QString baseKey;        // nombre base común
+	QString groupKey;       // identifica la "toma" multi-ángulo sincronizada
+	QString cameraName;     // Nombre de la cámara: "Principal", "Cámara 1", "Primera Base", etc.
+	QString cameraKey;      // Clave normalizada: "principal", "camara1", "primera_base", etc.
+	bool isPrincipal = false; // true si es la repetición del buffer principal de OBS
+	int camera = 0;         // índice numérico si aplica
 	qint64 mtimeMs = 0;
+	qint64 eventTimeMs = 0; // tiempo extraído del nombre del archivo o mtime
 	qint64 sizeBytes = 0;
-	int number = 0;    // numeración cronológica 1..N
+	int number = 0;         // numeración cronológica 1..N
 
 	bool isValid() const { return !filePath.isEmpty(); }
 
 	QString cameraLabel() const
 	{
-		return camera == 0 ? QStringLiteral("Principal") : QStringLiteral("CAM%1").arg(camera);
+		if (!cameraName.isEmpty())
+			return cameraName;
+		return isPrincipal ? QStringLiteral("Principal") : QStringLiteral("Cámara %1").arg(camera > 0 ? camera : 1);
 	}
 
 	QString cameraLongLabel() const
 	{
-		return camera == 0 ? QStringLiteral("Principal") : QStringLiteral("Cámara %1").arg(camera);
+		return cameraLabel();
 	}
 
 	QString displayName() const
 	{
-		const QString time = QDateTime::fromMSecsSinceEpoch(mtimeMs).toString(QStringLiteral("HH:mm:ss"));
+		const qint64 t = (eventTimeMs > 0) ? eventTimeMs : mtimeMs;
+		const QString time = QDateTime::fromMSecsSinceEpoch(t).toString(QStringLiteral("HH:mm:ss"));
 		return QStringLiteral("%1 - %2 - %3").arg(number, 3, 10, QLatin1Char('0')).arg(cameraLabel(), time);
 	}
 };

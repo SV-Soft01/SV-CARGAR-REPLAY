@@ -42,7 +42,15 @@ private slots:
 	void onClipsUpdated(const bbr::ClipList &clips);
 	void onFilterChanged();
 	void onClipTableSelectionChanged();
+	void onClipClicked(int row, int col);
 	void onClipDoubleClicked(int row, int col);
+	void onClipContextMenu(const QPoint &pos);
+
+	// Playlist personalizada
+	void onAddToCustomPlaylist();
+	void onLoadCustomPlaylist();
+	void onClearCustomPlaylist();
+	void onToggleCustomPlaylistFilter();
 
 	// Etiquetas deportivas
 	void onTagClicked();
@@ -92,7 +100,10 @@ private:
 	// Datos en memoria
 	ClipList m_allClips;
 	ClipList m_visibleClips;
+	ClipList m_customPlaylist;
 	int m_activeDeckTab = 0; // 0 = Deck A, 1 = Deck B
+	int m_lastTappedDeck = 1; // Alternancia A/B inteligente
+	bool m_filterCustomPlaylistOnly = false;
 	bool m_isScrubbing = false;
 
 	// Widgets UI - Barra Superior
@@ -101,7 +112,7 @@ private:
 	QComboBox *m_comboLiveScene = nullptr;
 	QPushButton *m_btnReturnLive = nullptr;
 
-	// Filtros Rápidos
+	// Filtros Rápidos y Playlist
 	QComboBox *m_comboCameraFilter = nullptr;
 	QButtonGroup *m_filterTeamGroup = nullptr;
 	QPushButton *m_btnFilterAll = nullptr;
@@ -110,6 +121,10 @@ private:
 	QPushButton *m_btnFilter3PT = nullptr;
 	QPushButton *m_btnFilterTop = nullptr;
 	QPushButton *m_btnFilterVar = nullptr;
+	QPushButton *m_btnAddToPlaylist = nullptr;
+	QPushButton *m_btnFilterPlaylist = nullptr;
+	QPushButton *m_btnLoadPlaylist = nullptr;
+	QPushButton *m_btnClearPlaylist = nullptr;
 	QPushButton *m_btnHalftimeSummary = nullptr;
 
 	// Tabla de Clips

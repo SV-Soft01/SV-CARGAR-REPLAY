@@ -476,6 +476,29 @@ void ReplayEngine::onTick()
 	if (m_shutdown)
 		return;
 
+	const int air = deckOnAir();
+	if (air >= 0) {
+		if (m_lastAirDeck != air) {
+			m_lastAirDeck = air;
+			// Cuando una casilla entra al aire (Programa), jamás puede quedarse en pausa
+			Deck &dAir = m_decks[air];
+			if (dAir.desiredSpeed <= 0)
+				dAir.desiredSpeed = (dAir.speed > 0) ? dAir.speed : 100;
+			dAir.pausedByZero = false;
+			if (dAir.pending.active)
+				dAir.pending.pauseAfter = false;
+			SourcePtr srcAir = peekSource(dAir);
+			if (srcAir) {
+				const obs_media_state st = obs_source_media_get_state(srcAir.get());
+				if (st == OBS_MEDIA_STATE_PAUSED || st == OBS_MEDIA_STATE_STOPPED) {
+					obs_source_media_play_pause(srcAir.get(), false);
+				}
+			}
+		}
+	} else {
+		m_lastAirDeck = -1;
+	}
+
 	for (Deck &d : m_decks) {
 		if (!d.weak)
 			continue;
@@ -781,15 +804,6 @@ void ReplayEngine::applySpeed(int deck)
 	if (d.desiredSpeed <= 0)
 		return;
 
-	if (d.pending.active) {
-		// Se re-programa automáticamente al terminar la apertura (processPending)
-		if (d.resumeAfterSpeed) {
-			d.pending.pauseAfter = false;
-			d.resumeAfterSpeed = false;
-		}
-		return;
-	}
-
 	SourcePtr src = peekSource(d);
 	if (!src || !d.clip.isValid()) {
 		d.speed = d.desiredSpeed;
@@ -805,8 +819,6 @@ void ReplayEngine::applySpeed(int deck)
 		return;
 	}
 
-	// ffmpeg_source necesita reabrir el archivo para cambiar speed_percent.
-	// Guardamos posición/estado y lo restauramos tras la reapertura.
 	const obs_media_state st = obs_source_media_get_state(src.get());
 	qint64 t = obs_source_media_get_time(src.get());
 	if (st == OBS_MEDIA_STATE_ENDED)
@@ -814,15 +826,31 @@ void ReplayEngine::applySpeed(int deck)
 	if (d.stepPos >= 0.0 && st != OBS_MEDIA_STATE_PLAYING)
 		t = std::llround(d.stepPos);
 
-	bool pauseAfter = st != OBS_MEDIA_STATE_PLAYING;
-	if (d.resumeAfterSpeed) {
-		pauseAfter = false;
-		d.resumeAfterSpeed = false;
+	const bool wasPlaying = (st == OBS_MEDIA_STATE_PLAYING) || d.resumeAfterSpeed;
+	d.speed = d.desiredSpeed;
+	d.resumeAfterSpeed = false;
+
+	// Actualizar velocidad directamente en la configuración de la fuente para evitar recrear demuxer completo
+	obs_data_t *settings = obs_source_get_settings(src.get());
+	if (settings) {
+		obs_data_set_int(settings, "speed_percent", std::clamp(d.speed, 1, 200));
+		obs_source_update(src.get(), settings);
+		obs_data_release(settings);
 	}
 
-	d.speed = d.desiredSpeed;
-	beginPending(d, t, false, pauseAfter);
-	applyMediaSettings(src.get(), d.clip.filePath, d.speed);
+	// Restaurar posición y estado de reproducción inmediatamente para evitar parpadeos o saltos a cuadro 0
+	if (t > 0) {
+		obs_source_media_set_time(src.get(), t);
+	}
+
+	if (!wasPlaying) {
+		obs_source_media_play_pause(src.get(), true);
+		if (t >= 0)
+			obs_source_media_set_time(src.get(), t);
+	} else {
+		obs_source_media_play_pause(src.get(), false);
+	}
+
 	emit deckChanged(deck);
 }
 
@@ -834,8 +862,7 @@ void ReplayEngine::sendToPreview(int deck)
 	if (!validDeck(deck))
 		return;
 	if (!obs_frontend_preview_program_mode_active()) {
-		emit statusMessage(QStringLiteral("Activa el Modo Estudio para ver la casilla en Preview."));
-		return;
+		obs_frontend_set_preview_program_mode(true);
 	}
 	if (isOnAir(deck))
 		return;
@@ -861,9 +888,20 @@ void ReplayEngine::takeToProgram(int deck)
 		return;
 	}
 
-	play(deck);
+	// Obligatorio: la repetición siempre pasa a Programa en reproducción (nunca pausada)
+	if (d.desiredSpeed <= 0)
+		d.desiredSpeed = (d.speed > 0) ? d.speed : 100;
+	d.pausedByZero = false;
+	if (d.pending.active)
+		d.pending.pauseAfter = false;
+
+	obs_source_media_play_pause(src.get(), false);
+
 	if (!isOnAir(deck))
-		obs_frontend_set_current_scene(scene.get()); // dispara la transición (Stinger) UNA vez
+		obs_frontend_set_current_scene(scene.get()); // Dispara la transición (Stinger)
+
+	obs_source_media_play_pause(src.get(), false);
+	emit deckChanged(deck);
 }
 
 void ReplayEngine::returnToLive()

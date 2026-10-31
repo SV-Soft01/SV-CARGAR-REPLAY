@@ -32,57 +32,166 @@ const QStringList &videoFilters()
 	return filters;
 }
 
-// "Replay 2026-10-31 15-07-15_CAM2" -> camera = 2, key = "Replay 2026-10-31 15-07-15"
-// "Replay 2026-10-31 15-07-15"      -> camera = 0 (Principal), key = nombre completo
-void parseCamera(const QString &baseName, int &camera, QString &key)
+QString formatCameraLabel(const QString &raw)
 {
-	static const QRegularExpression re(
-		QStringLiteral(R"(^(?:(.*?)[ _\-])?(?:CAM|CAMERA|CAMARA|CÁMARA)[ _\-]?(\d{1,2})$)"),
+	QString s = raw.trimmed();
+	// Chequear si es camara1, cam2, etc.
+	static const QRegularExpression reCamNum(
+		QStringLiteral(R"(^(?:cam|camara|camera|cámara)[ _\-]?(\d+)$)"),
+		QRegularExpression::CaseInsensitiveOption);
+	QRegularExpressionMatch mNum = reCamNum.match(s);
+	if (mNum.hasMatch()) {
+		return QStringLiteral("Cámara %1").arg(mNum.captured(1));
+	}
+
+	// Si empieza con camara_ / camera_
+	static const QRegularExpression reCamPrefix(
+		QStringLiteral(R"(^(?:camara|camera|cámara)[ _\-]+(.+)$)"),
+		QRegularExpression::CaseInsensitiveOption);
+	QRegularExpressionMatch mPref = reCamPrefix.match(s);
+	if (mPref.hasMatch()) {
+		s = mPref.captured(1).trimmed();
+		QStringList words = s.split(QLatin1Char('_'), Qt::SkipEmptyParts);
+		for (QString &w : words) {
+			if (!w.isEmpty())
+				w = w.at(0).toUpper() + w.mid(1).toLower();
+		}
+		return QStringLiteral("Cámara %1").arg(words.join(QLatin1Char(' ')));
+	}
+
+	// Formatear palabras separadas por _ o guión
+	QStringList words = s.split(QRegularExpression(QStringLiteral("[_\\-]+")), Qt::SkipEmptyParts);
+	for (QString &w : words) {
+		if (!w.isEmpty())
+			w = w.at(0).toUpper() + w.mid(1).toLower();
+	}
+	return words.join(QLatin1Char(' '));
+}
+
+void parseReplayFileInfo(const QFileInfo &fi, ClipInfo &c)
+{
+	const QString baseName = fi.completeBaseName();
+
+	// -----------------------------------------------------------------------
+	// Formato A: Multi-cámara independiente
+	// Ejemplo: replay_0016_20261025_112431_camara_tongo
+	//          replay_0016_20261025_112431_primera_base
+	//          replay_0012_20261024_223102_camara1
+	//          replay_0024_20261025_153331_primera_base
+	// -----------------------------------------------------------------------
+	static const QRegularExpression reMulti(
+		QStringLiteral(R"(^replay_(\d+)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_(.+)$)"),
 		QRegularExpression::CaseInsensitiveOption);
 
-	const QRegularExpressionMatch m = re.match(baseName);
-	if (m.hasMatch()) {
-		camera = std::max(0, m.captured(2).toInt());
-		key = m.captured(1).trimmed();
-	} else {
-		camera = 0;
-		key = baseName;
+	QRegularExpressionMatch mMulti = reMulti.match(baseName);
+	if (mMulti.hasMatch()) {
+		const int y = mMulti.captured(2).toInt();
+		const int m = mMulti.captured(3).toInt();
+		const int d = mMulti.captured(4).toInt();
+		const int hh = mMulti.captured(5).toInt();
+		const int mm = mMulti.captured(6).toInt();
+		const int ss = mMulti.captured(7).toInt();
+		const QDateTime dt(QDate(y, m, d), QTime(hh, mm, ss));
+		c.eventTimeMs = dt.isValid() ? dt.toMSecsSinceEpoch() : fi.lastModified().toMSecsSinceEpoch();
+
+		const QString rawCam = mMulti.captured(8);
+		c.cameraKey = rawCam.toLower().trimmed();
+		c.cameraName = formatCameraLabel(rawCam);
+		c.isPrincipal = false;
+
+		static const QRegularExpression numCheck(QStringLiteral(R"(\d+)"));
+		QRegularExpressionMatch mNum = numCheck.match(rawCam);
+		c.camera = mNum.hasMatch() ? mNum.captured(0).toInt() : 1;
+
+		c.baseKey = QStringLiteral("replay_%1_%2%3%4_%5%6%7")
+			.arg(mMulti.captured(1))
+			.arg(mMulti.captured(2)).arg(mMulti.captured(3)).arg(mMulti.captured(4))
+			.arg(mMulti.captured(5)).arg(mMulti.captured(6)).arg(mMulti.captured(7));
+		return;
 	}
+
+	// -----------------------------------------------------------------------
+	// Formato B: Buffer de repetición Principal de OBS
+	// Ejemplo: 107 - Replay 2026-10-24 22-31-02
+	//          111 - Replay 2026-10-25 11-24-32
+	//          Replay 2026-10-24 22-31-02
+	//          139 - 2026-10-25 12-52-05
+	// -----------------------------------------------------------------------
+	static const QRegularExpression reObs(
+		QStringLiteral(R"(^(?:(\d+)\s*[-_]\s*)?(?:replay[-_ ]*)?(\d{4})[-_](\d{2})[-_](\d{2})[-_ ]+(\d{2})[-_](\d{2})[-_](\d{2})(?:[ _\-]+(.+))?$)"),
+		QRegularExpression::CaseInsensitiveOption);
+
+	QRegularExpressionMatch mObs = reObs.match(baseName);
+	if (mObs.hasMatch()) {
+		const int y = mObs.captured(2).toInt();
+		const int m = mObs.captured(3).toInt();
+		const int d = mObs.captured(4).toInt();
+		const int hh = mObs.captured(5).toInt();
+		const int mm = mObs.captured(6).toInt();
+		const int ss = mObs.captured(7).toInt();
+		const QDateTime dt(QDate(y, m, d), QTime(hh, mm, ss));
+		c.eventTimeMs = dt.isValid() ? dt.toMSecsSinceEpoch() : fi.lastModified().toMSecsSinceEpoch();
+
+		const QString suffix = mObs.captured(8).trimmed();
+		if (suffix.isEmpty()) {
+			c.isPrincipal = true;
+			c.camera = 0;
+			c.cameraKey = QStringLiteral("principal");
+			c.cameraName = QStringLiteral("Principal");
+		} else {
+			c.isPrincipal = false;
+			c.cameraKey = suffix.toLower();
+			c.cameraName = formatCameraLabel(suffix);
+			static const QRegularExpression numCheck(QStringLiteral(R"(\d+)"));
+			QRegularExpressionMatch mNum = numCheck.match(suffix);
+			c.camera = mNum.hasMatch() ? mNum.captured(0).toInt() : 1;
+		}
+
+		c.baseKey = QStringLiteral("%1-%2-%3_%4-%5-%6")
+			.arg(mObs.captured(2)).arg(mObs.captured(3)).arg(mObs.captured(4))
+			.arg(mObs.captured(5)).arg(mObs.captured(6)).arg(mObs.captured(7));
+		return;
+	}
+
+	// -----------------------------------------------------------------------
+	// Formato C: Genérico / Fallback
+	// -----------------------------------------------------------------------
+	c.eventTimeMs = fi.lastModified().toMSecsSinceEpoch();
+	if (baseName.contains(QStringLiteral("replay"), Qt::CaseInsensitive) &&
+	    !baseName.contains(QStringLiteral("cam"), Qt::CaseInsensitive)) {
+		c.isPrincipal = true;
+		c.camera = 0;
+		c.cameraKey = QStringLiteral("principal");
+		c.cameraName = QStringLiteral("Principal");
+	} else {
+		c.isPrincipal = false;
+		c.camera = 1;
+		c.cameraKey = QStringLiteral("cam1");
+		c.cameraName = QStringLiteral("Cámara 1");
+	}
+	c.baseKey = baseName;
 }
 
 struct Group {
-	QString key;      // groupKey asignado (ruta del primer clip)
-	QString baseKey;  // nombre base sin sufijo
+	QString key;
 	qint64 anchorMs = 0;
-	QVector<int> cameras;
+	QStringList cameraKeys;
 };
 
 void assignGroups(ClipList &clips)
 {
+	constexpr qint64 kMaxGroupDeltaMs = 4000; // Tolerancia de hasta 4s para clips descargados juntos
+
 	QVector<Group> groups;
 	for (ClipInfo &c : clips) {
+		const qint64 t = (c.eventTimeMs > 0) ? c.eventTimeMs : c.mtimeMs;
 		int gi = -1;
 
-		// 1) Coincidencia exacta de nombre base (p.ej. X_CAM1 / X_CAM2 / X)
-		if (!c.baseKey.isEmpty()) {
-			for (int i = int(groups.size()) - 1; i >= 0; --i) {
-				const Group &g = groups[i];
-				if (c.mtimeMs - g.anchorMs > 10 * 60 * 1000)
-					break;
-				if (g.baseKey == c.baseKey && !g.cameras.contains(c.camera)) {
-					gi = i;
-					break;
-				}
-			}
-		}
-
-		// 2) Coincidencia temporal: otra cámara guardada casi en el mismo instante
-		if (gi < 0) {
-			for (int i = int(groups.size()) - 1; i >= 0; --i) {
-				const Group &g = groups[i];
-				if (c.mtimeMs - g.anchorMs > kGroupToleranceMs)
-					break;
-				if (!g.cameras.contains(c.camera)) {
+		// Buscar un grupo existente dentro de la tolerancia temporal que NO contenga ya esta cámara
+		for (int i = int(groups.size()) - 1; i >= 0; --i) {
+			const Group &g = groups[i];
+			if (std::abs(t - g.anchorMs) <= kMaxGroupDeltaMs) {
+				if (!g.cameraKeys.contains(c.cameraKey)) {
 					gi = i;
 					break;
 				}
@@ -92,13 +201,14 @@ void assignGroups(ClipList &clips)
 		if (gi < 0) {
 			Group g;
 			g.key = c.filePath;
-			g.baseKey = c.baseKey;
-			g.anchorMs = c.mtimeMs;
+			g.anchorMs = t;
+			g.cameraKeys.push_back(c.cameraKey);
 			groups.push_back(g);
 			gi = int(groups.size()) - 1;
+		} else {
+			groups[gi].cameraKeys.push_back(c.cameraKey);
 		}
 
-		groups[gi].cameras.push_back(c.camera);
 		c.groupKey = groups[gi].key;
 	}
 }
@@ -135,14 +245,18 @@ void ScanWorker::scan(const QString &folder, bool force)
 			c.fileName = fi.fileName();
 			c.mtimeMs = mtime;
 			c.sizeBytes = fi.size();
-			parseCamera(fi.completeBaseName(), c.camera, c.baseKey);
+			parseReplayFileInfo(fi, c);
 			clips.push_back(std::move(c));
 		}
 	}
 
 	std::sort(clips.begin(), clips.end(), [](const ClipInfo &a, const ClipInfo &b) {
-		if (a.mtimeMs != b.mtimeMs)
-			return a.mtimeMs < b.mtimeMs;
+		const qint64 ta = (a.eventTimeMs > 0) ? a.eventTimeMs : a.mtimeMs;
+		const qint64 tb = (b.eventTimeMs > 0) ? b.eventTimeMs : b.mtimeMs;
+		if (ta != tb)
+			return ta < tb;
+		if (a.isPrincipal != b.isPrincipal)
+			return a.isPrincipal; // Principal primero en el mismo segundo
 		if (a.camera != b.camera)
 			return a.camera < b.camera;
 		return a.fileName < b.fileName;

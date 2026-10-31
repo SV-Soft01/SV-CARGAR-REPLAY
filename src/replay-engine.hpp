@@ -158,6 +158,7 @@ private:
 
 	std::array<Deck, kDeckCount> m_decks;
 	QTimer m_tick;
+	int m_lastAirDeck = -1;
 
 	QString m_liveScene = QString::fromUtf8(kDefaultLiveScene);
 	bool m_autoReturn = true;
