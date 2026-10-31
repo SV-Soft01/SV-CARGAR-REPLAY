@@ -18,6 +18,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSlider>
+#include <QSplitter>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>

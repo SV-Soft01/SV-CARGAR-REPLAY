@@ -499,7 +499,8 @@ void ReplayDock::saveSettings()
 	config_set_string(cfg, kConfigSection, "LiveScene", m_engine.liveScene().toUtf8().constData());
 	config_set_string(cfg, kConfigSection, "HorizontalLayout", m_isHorizontalLayout ? "true" : "false");
 	if (m_mainSplitter) {
-		config_set_string(cfg, kConfigSection, "SplitterState", m_mainSplitter->saveState().toBase64().constData());
+		const QByteArray splitData = m_mainSplitter->saveState().toBase64();
+		config_set_string(cfg, kConfigSection, "SplitterState", splitData.constData());
 	}
 	config_save(cfg);
 }
