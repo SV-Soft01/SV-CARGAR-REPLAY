@@ -1,0 +1,121 @@
+name: Build obs-basketball-replay (Windows x64)
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      obs_version:
+        description: 'Tag de OBS Studio contra el que compilar'
+        required: false
+        default: '32.1.2'
+
+permissions:
+  contents: write
+
+env:
+  OBS_VERSION: ${{ github.event.inputs.obs_version || '32.1.2' }}
+  PLUGIN_NAME: obs-basketball-replay
+  BUILD_CONFIG: RelWithDebInfo
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 (OBS ${{ github.event.inputs.obs_version || '32.1.2' }})
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout del plugin
+        uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      - name: Checkout de OBS Studio ${{ env.OBS_VERSION }}
+        uses: actions/checkout@v4
+        with:
+          repository: obsproject/obs-studio
+          ref: ${{ env.OBS_VERSION }}
+          path: obs-studio
+          fetch-depth: 1
+          submodules: false
+
+      - name: Caché de dependencias de OBS (obs-deps / Qt6)
+        uses: actions/cache@v4
+        with:
+          path: obs-studio/.deps
+          key: obs-deps-win-x64-${{ hashFiles('obs-studio/buildspec.json') }}
+
+      - name: Configurar libobs + obs-frontend-api
+        run: |
+          cmake -S obs-studio -B obs-studio/build_x64 `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_SYSTEM_VERSION="10.0.22621" `
+            -DOBS_CMAKE_VERSION:STRING=3.0.0 `
+            -DOBS_VERSION_OVERRIDE:STRING="$env:OBS_VERSION" `
+            -DENABLE_PLUGINS:BOOL=OFF `
+            -DENABLE_FRONTEND:BOOL=OFF `
+            -DENABLE_UI:BOOL=OFF `
+            -DENABLE_SCRIPTING:BOOL=OFF `
+            -DENABLE_BROWSER:BOOL=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compilar libobs + obs-frontend-api
+        run: |
+          cmake --build obs-studio/build_x64 --config $env:BUILD_CONFIG --target obs-frontend-api --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Instalar SDK de OBS (componente Development)
+        run: |
+          cmake --install obs-studio/build_x64 --config $env:BUILD_CONFIG --component Development --prefix "$env:GITHUB_WORKSPACE/obs-sdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Localizar dependencias precompiladas
+        id: deps
+        run: |
+          $prefix = @("$env:GITHUB_WORKSPACE/obs-sdk")
+          $prefix += Get-ChildItem obs-studio/.deps -Directory |
+                     Where-Object { $_.Name -notlike 'cef*' } |
+                     ForEach-Object { $_.FullName }
+          $prefixStr = ($prefix -join ';') -replace '\\', '/'
+
+          $qtConfig = Get-ChildItem obs-studio/.deps -Recurse -Filter Qt6Config.cmake -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $qtConfig) { Write-Error "No se encontró Qt6Config.cmake en obs-studio/.deps"; exit 1 }
+          $qtDir = $qtConfig.DirectoryName -replace '\\', '/'
+
+          "prefix=$prefixStr" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "qtdir=$qtDir"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Configurar plugin
+        run: |
+          cmake -S plugin -B plugin/build_x64 `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_SYSTEM_VERSION="10.0.22621" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.deps.outputs.prefix }}" `
+            "-DQt6_DIR=${{ steps.deps.outputs.qtdir }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compilar plugin
+        run: |
+          cmake --build plugin/build_x64 --config $env:BUILD_CONFIG --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Empaquetar
+        run: |
+          $out = "package/obs-plugins/64bit"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $bin = "plugin/build_x64/$env:BUILD_CONFIG"
+          Copy-Item "$bin/$env:PLUGIN_NAME.dll" $out
+          if (Test-Path "$bin/$env:PLUGIN_NAME.pdb") { Copy-Item "$bin/$env:PLUGIN_NAME.pdb" $out }
+          Copy-Item plugin/README.md package/ -ErrorAction SilentlyContinue
+          Compress-Archive -Path package/* -DestinationPath "$env:PLUGIN_NAME-windows-x64.zip" -Force
+
+      - name: Publicar artefacto (DLL lista para OBS)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}-windows-x64-obs${{ env.OBS_VERSION }}
+          path: package/
+          if-no-files-found: error
