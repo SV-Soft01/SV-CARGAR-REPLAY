@@ -530,7 +530,8 @@ void ReplayEngine::processPending(Deck &d, obs_source_t *src)
 	const bool running = st == OBS_MEDIA_STATE_PLAYING || st == OBS_MEDIA_STATE_PAUSED;
 	const qint64 elapsed = d.pending.timer.elapsed();
 
-	const bool ready = running && dur > 0 && (started || elapsed > kPendingFallbackMs);
+	// Si el medio ya está abierto y corriendo con duración, está listo de inmediato (sin esperar 2.5s)
+	const bool ready = (running && dur > 0) || started || (elapsed > 350);
 	if (!ready) {
 		if (elapsed > kPendingTimeoutMs || st == OBS_MEDIA_STATE_ERROR) {
 			d.pending.active = false;
@@ -888,13 +889,16 @@ void ReplayEngine::takeToProgram(int deck)
 		return;
 	}
 
-	// Obligatorio: la repetición siempre pasa a Programa en reproducción (nunca pausada)
+	// Obligatorio: la repetición siempre pasa a Programa en reproducción fluida (nunca frisada)
 	if (d.desiredSpeed <= 0)
 		d.desiredSpeed = (d.speed > 0) ? d.speed : 100;
 	d.pausedByZero = false;
-	if (d.pending.active)
-		d.pending.pauseAfter = false;
+	d.pending.active = false; // Cancelar cualquier retraso pendiente
 
+	const obs_media_state st = obs_source_media_get_state(src.get());
+	if (st == OBS_MEDIA_STATE_ENDED || st == OBS_MEDIA_STATE_STOPPED) {
+		obs_source_media_restart(src.get());
+	}
 	obs_source_media_play_pause(src.get(), false);
 
 	if (!isOnAir(deck))

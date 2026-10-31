@@ -72,6 +72,7 @@ private slots:
 	void onTakeProgramClicked();
 	void onReturnLiveClicked();
 	void onLiveSceneComboChanged(int index);
+	void onToggleOrientation();
 
 	// Multi-cámara instantánea
 	void onCameraSwitchClicked(int camIndex);
@@ -104,7 +105,12 @@ private:
 	int m_activeDeckTab = 0; // 0 = Deck A, 1 = Deck B
 	int m_lastTappedDeck = 1; // Alternancia A/B inteligente
 	bool m_filterCustomPlaylistOnly = false;
+	bool m_isHorizontalLayout = true;
 	bool m_isScrubbing = false;
+
+	// Layout dinámico con Splitter
+	QSplitter *m_mainSplitter = nullptr;
+	QPushButton *m_btnToggleOrientation = nullptr;
 
 	// Widgets UI - Barra Superior
 	QLineEdit *m_txtFolder = nullptr;

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace bbr {
 
@@ -69,12 +70,12 @@ void ReplayDock::init()
 void ReplayDock::setupUi()
 {
 	QWidget *mainWidget = new QWidget(this);
-	QVBoxLayout *mainLayout = new QVBoxLayout(mainWidget);
-	mainLayout->setContentsMargins(4, 4, 4, 4);
-	mainLayout->setSpacing(3);
+	QVBoxLayout *rootLayout = new QVBoxLayout(mainWidget);
+	rootLayout->setContentsMargins(3, 3, 3, 3);
+	rootLayout->setSpacing(3);
 
 	// -------------------------------------------------------------------------
-	// 1. Barra Superior Compacta: Carpeta y Escena en Vivo
+	// 1. Barra Superior Principal: Carpeta, En Vivo y Cambio de Orientación
 	// -------------------------------------------------------------------------
 	QHBoxLayout *topBar = new QHBoxLayout();
 	topBar->setSpacing(3);
@@ -97,77 +98,71 @@ void ReplayDock::setupUi()
 	m_btnReturnLive->setStyleSheet(QStringLiteral("QPushButton { background-color: #b71c1c; color: white; font-weight: bold; padding: 3px 8px; border-radius: 3px; } QPushButton:hover { background-color: #d32f2f; }"));
 	connect(m_btnReturnLive, &QPushButton::clicked, this, &ReplayDock::onReturnLiveClicked);
 
+	m_btnToggleOrientation = new QPushButton(m_isHorizontalLayout ? QStringLiteral("⬌ Lado a Lado") : QStringLiteral("⬍ Apilado"), mainWidget);
+	m_btnToggleOrientation->setToolTip(QStringLiteral("Cambiar disposición: Lado a Lado (videos a la izquierda, controles a la derecha) o Apilado (arriba/abajo)"));
+	m_btnToggleOrientation->setStyleSheet(QStringLiteral("QPushButton { background-color: #37474f; color: white; font-weight: bold; }"));
+	connect(m_btnToggleOrientation, &QPushButton::clicked, this, &ReplayDock::onToggleOrientation);
+
 	topBar->addWidget(lblFolder);
 	topBar->addWidget(m_txtFolder, 1);
 	topBar->addWidget(m_btnBrowse);
-	topBar->addSpacing(6);
+	topBar->addSpacing(8);
 	topBar->addWidget(lblLive);
 	topBar->addWidget(m_comboLiveScene);
 	topBar->addWidget(m_btnReturnLive);
+	topBar->addSpacing(6);
+	topBar->addWidget(m_btnToggleOrientation);
 
-	mainLayout->addLayout(topBar);
+	rootLayout->addLayout(topBar);
 
 	// -------------------------------------------------------------------------
-	// 2. Filtros Rápidos y Playlist Personalizada
+	// 2. QSplitter Adaptable: Panel de Videos y Panel de Controles
 	// -------------------------------------------------------------------------
+	m_mainSplitter = new QSplitter(m_isHorizontalLayout ? Qt::Horizontal : Qt::Vertical, mainWidget);
+	m_mainSplitter->setChildrenCollapsible(false);
+
+	// =========================================================================
+	// PANEL A: Lista de Videos y Filtros
+	// =========================================================================
+	QWidget *videoPanel = new QWidget(m_mainSplitter);
+	QVBoxLayout *videoLayout = new QVBoxLayout(videoPanel);
+	videoLayout->setContentsMargins(1, 1, 1, 1);
+	videoLayout->setSpacing(2);
+
+	// Filtros de Cámara y Etiquetas Deportivas
 	QHBoxLayout *filterBar = new QHBoxLayout();
-	filterBar->setSpacing(3);
+	filterBar->setSpacing(2);
 
-	m_comboCameraFilter = new QComboBox(mainWidget);
+	m_comboCameraFilter = new QComboBox(videoPanel);
 	m_comboCameraFilter->addItem(QStringLiteral("Todas las cámaras"), QString());
 	connect(m_comboCameraFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
 		&ReplayDock::onFilterChanged);
 
 	m_filterTeamGroup = new QButtonGroup(this);
-	m_btnFilterAll = new QPushButton(QStringLiteral("Todos"), mainWidget);
+	m_btnFilterAll = new QPushButton(QStringLiteral("Todos"), videoPanel);
 	m_btnFilterAll->setCheckable(true);
 	m_btnFilterAll->setChecked(true);
-	m_btnFilterHome = new QPushButton(QStringLiteral("Casa [C]"), mainWidget);
+	m_btnFilterHome = new QPushButton(QStringLiteral("Casa [C]"), videoPanel);
 	m_btnFilterHome->setCheckable(true);
-	m_btnFilterAway = new QPushButton(QStringLiteral("Vis [V]"), mainWidget);
+	m_btnFilterAway = new QPushButton(QStringLiteral("Vis [V]"), videoPanel);
 	m_btnFilterAway->setCheckable(true);
 	m_filterTeamGroup->addButton(m_btnFilterAll, 0);
 	m_filterTeamGroup->addButton(m_btnFilterHome, 1);
 	m_filterTeamGroup->addButton(m_btnFilterAway, 2);
 	connect(m_filterTeamGroup, &QButtonGroup::idClicked, this, &ReplayDock::onFilterChanged);
 
-	m_btnFilter3PT = new QPushButton(QStringLiteral("3PT"), mainWidget);
+	m_btnFilter3PT = new QPushButton(QStringLiteral("3PT"), videoPanel);
 	m_btnFilter3PT->setCheckable(true);
 	connect(m_btnFilter3PT, &QPushButton::toggled, this, &ReplayDock::onFilterChanged);
 
-	m_btnFilterTop = new QPushButton(QStringLiteral("TOP"), mainWidget);
+	m_btnFilterTop = new QPushButton(QStringLiteral("TOP"), videoPanel);
 	m_btnFilterTop->setCheckable(true);
 	connect(m_btnFilterTop, &QPushButton::toggled, this, &ReplayDock::onFilterChanged);
 
-	m_btnFilterVar = new QPushButton(QStringLiteral("VAR"), mainWidget);
+	m_btnFilterVar = new QPushButton(QStringLiteral("VAR"), videoPanel);
 	m_btnFilterVar->setCheckable(true);
 	connect(m_btnFilterVar, &QPushButton::toggled, this, &ReplayDock::onFilterChanged);
 
-	// Controles de Playlist Personalizada
-	m_btnAddToPlaylist = new QPushButton(QStringLiteral("+ Playlist"), mainWidget);
-	m_btnAddToPlaylist->setToolTip(QStringLiteral("Añadir los clips seleccionados a mi lista de reproducción"));
-	m_btnAddToPlaylist->setStyleSheet(QStringLiteral("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; }"));
-	connect(m_btnAddToPlaylist, &QPushButton::clicked, this, &ReplayDock::onAddToCustomPlaylist);
-
-	m_btnFilterPlaylist = new QPushButton(QStringLiteral("★ Mi Playlist (0)"), mainWidget);
-	m_btnFilterPlaylist->setToolTip(QStringLiteral("Alternar vista para ver solo los clips de mi playlist"));
-	connect(m_btnFilterPlaylist, &QPushButton::clicked, this, &ReplayDock::onToggleCustomPlaylistFilter);
-
-	m_btnLoadPlaylist = new QPushButton(QStringLiteral("▶ Cargar PL"), mainWidget);
-	m_btnLoadPlaylist->setToolTip(QStringLiteral("Cargar toda mi playlist continua en el Deck para emitir"));
-	m_btnLoadPlaylist->setStyleSheet(QStringLiteral("QPushButton { background-color: #0277bd; color: white; font-weight: bold; }"));
-	connect(m_btnLoadPlaylist, &QPushButton::clicked, this, &ReplayDock::onLoadCustomPlaylist);
-
-	m_btnClearPlaylist = new QPushButton(QStringLiteral("Limpiar PL"), mainWidget);
-	m_btnClearPlaylist->setToolTip(QStringLiteral("Vaciar mi lista personalizada"));
-	connect(m_btnClearPlaylist, &QPushButton::clicked, this, &ReplayDock::onClearCustomPlaylist);
-
-	m_btnHalftimeSummary = new QPushButton(QStringLiteral("Medio Tiempo"), mainWidget);
-	m_btnHalftimeSummary->setToolTip(QStringLiteral("Resumen automático con todas las jugadas TOP y 3PT"));
-	m_btnHalftimeSummary->setStyleSheet(QStringLiteral("QPushButton { background-color: #4527a0; color: white; font-weight: bold; }"));
-	connect(m_btnHalftimeSummary, &QPushButton::clicked, this, &ReplayDock::onHalftimeSummaryClicked);
-
-	filterBar->addWidget(new QLabel(QStringLiteral("Filtro:"), mainWidget));
 	filterBar->addWidget(m_comboCameraFilter);
 	filterBar->addWidget(m_btnFilterAll);
 	filterBar->addWidget(m_btnFilterHome);
@@ -175,52 +170,49 @@ void ReplayDock::setupUi()
 	filterBar->addWidget(m_btnFilter3PT);
 	filterBar->addWidget(m_btnFilterTop);
 	filterBar->addWidget(m_btnFilterVar);
-	filterBar->addSpacing(8);
-	filterBar->addWidget(m_btnAddToPlaylist);
-	filterBar->addWidget(m_btnFilterPlaylist);
-	filterBar->addWidget(m_btnLoadPlaylist);
-	filterBar->addWidget(m_btnClearPlaylist);
 	filterBar->addStretch(1);
-	filterBar->addWidget(m_btnHalftimeSummary);
 
-	mainLayout->addLayout(filterBar);
+	videoLayout->addLayout(filterBar);
 
-	// -------------------------------------------------------------------------
-	// 3. Tabla Central de Clips (Permite reducir altura para modo barra horizontal)
-	// -------------------------------------------------------------------------
-	m_tableClips = new QTableWidget(mainWidget);
+	// Tabla Central de Clips (ancho ajustado sin espacios negros vacíos)
+	m_tableClips = new QTableWidget(videoPanel);
 	m_tableClips->setColumnCount(4);
 	m_tableClips->setHorizontalHeaderLabels({QStringLiteral("Nº"), QStringLiteral("Hora / Clip"), QStringLiteral("Cámara"), QStringLiteral("Etiquetas")});
-	m_tableClips->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-	m_tableClips->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-	m_tableClips->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-	m_tableClips->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+	
+	m_tableClips->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+	m_tableClips->horizontalHeader()->resizeSection(0, 36);
+	m_tableClips->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+	m_tableClips->horizontalHeader()->resizeSection(1, 230);
+	m_tableClips->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+	m_tableClips->horizontalHeader()->resizeSection(2, 105);
+	m_tableClips->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+	m_tableClips->horizontalHeader()->resizeSection(3, 75);
+	m_tableClips->horizontalHeader()->setStretchLastSection(false);
+
 	m_tableClips->setSelectionBehavior(QAbstractItemView::SelectRows);
 	m_tableClips->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	m_tableClips->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	m_tableClips->setAlternatingRowColors(true);
-	m_tableClips->setMinimumHeight(60); // Permite encoger horizontalmente o verticalmente
+	m_tableClips->setMinimumWidth(260);
+	m_tableClips->setMinimumHeight(60);
 	m_tableClips->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	connect(m_tableClips, &QTableWidget::cellClicked, this, &ReplayDock::onClipClicked);
 	connect(m_tableClips, &QTableWidget::cellDoubleClicked, this, &ReplayDock::onClipDoubleClicked);
 	connect(m_tableClips, &QTableWidget::customContextMenuRequested, this, &ReplayDock::onClipContextMenu);
 
-	mainLayout->addWidget(m_tableClips, 1);
+	videoLayout->addWidget(m_tableClips, 1);
 
-	// -------------------------------------------------------------------------
-	// 4. Panel de Etiquetado Deportivo Rápido
-	// -------------------------------------------------------------------------
+	// Botones rápidos de etiquetado bajo la tabla
 	QHBoxLayout *tagBar = new QHBoxLayout();
-	tagBar->setSpacing(3);
-
-	QLabel *lblTagTitle = new QLabel(QStringLiteral("Etiquetar:"), mainWidget);
-	m_btnTagHome = new QPushButton(QStringLiteral("[C] Casa"), mainWidget);
-	m_btnTagAway = new QPushButton(QStringLiteral("[V] Vis"), mainWidget);
-	m_btnTag3PT = new QPushButton(QStringLiteral("[3PT] Triple"), mainWidget);
-	m_btnTagTop = new QPushButton(QStringLiteral("[TOP] Destacada"), mainWidget);
-	m_btnTagVar = new QPushButton(QStringLiteral("[VAR] Árbitro"), mainWidget);
-	m_btnTagClear = new QPushButton(QStringLiteral("Limpiar"), mainWidget);
+	tagBar->setSpacing(2);
+	QLabel *lblTagTitle = new QLabel(QStringLiteral("Marcar:"), videoPanel);
+	m_btnTagHome = new QPushButton(QStringLiteral("[C] Casa"), videoPanel);
+	m_btnTagAway = new QPushButton(QStringLiteral("[V] Vis"), videoPanel);
+	m_btnTag3PT = new QPushButton(QStringLiteral("[3PT]"), videoPanel);
+	m_btnTagTop = new QPushButton(QStringLiteral("[TOP]"), videoPanel);
+	m_btnTagVar = new QPushButton(QStringLiteral("[VAR]"), videoPanel);
+	m_btnTagClear = new QPushButton(QStringLiteral("Limpiar"), videoPanel);
 
 	connect(m_btnTagHome, &QPushButton::clicked, this, &ReplayDock::onTagClicked);
 	connect(m_btnTagAway, &QPushButton::clicked, this, &ReplayDock::onTagClicked);
@@ -232,26 +224,65 @@ void ReplayDock::setupUi()
 	tagBar->addWidget(lblTagTitle);
 	tagBar->addWidget(m_btnTagHome);
 	tagBar->addWidget(m_btnTagAway);
-	tagBar->addSpacing(6);
 	tagBar->addWidget(m_btnTag3PT);
 	tagBar->addWidget(m_btnTagTop);
 	tagBar->addWidget(m_btnTagVar);
 	tagBar->addWidget(m_btnTagClear);
 	tagBar->addStretch(1);
 
-	mainLayout->addLayout(tagBar);
+	videoLayout->addLayout(tagBar);
 
-	// -------------------------------------------------------------------------
-	// 5. Selector de Casilla (Double Deck A / B) y Control
-	// -------------------------------------------------------------------------
-	QGroupBox *deckGroup = new QGroupBox(QStringLiteral("Control de Emisión (Double Deck A/B)"), mainWidget);
+	// =========================================================================
+	// PANEL B: Controles de Emisión, Doble Deck y Playlists
+	// =========================================================================
+	QWidget *controlPanel = new QWidget(m_mainSplitter);
+	QVBoxLayout *controlLayout = new QVBoxLayout(controlPanel);
+	controlLayout->setContentsMargins(1, 1, 1, 1);
+	controlLayout->setSpacing(2);
+
+	// Barra de Playlist Personalizada
+	QHBoxLayout *plBar = new QHBoxLayout();
+	plBar->setSpacing(3);
+
+	m_btnAddToPlaylist = new QPushButton(QStringLiteral("+ Añadir a Playlist"), controlPanel);
+	m_btnAddToPlaylist->setToolTip(QStringLiteral("Añadir jugadas seleccionadas a mi lista personalizada"));
+	m_btnAddToPlaylist->setStyleSheet(QStringLiteral("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; }"));
+	connect(m_btnAddToPlaylist, &QPushButton::clicked, this, &ReplayDock::onAddToCustomPlaylist);
+
+	m_btnFilterPlaylist = new QPushButton(QStringLiteral("★ Mi Playlist (0)"), controlPanel);
+	m_btnFilterPlaylist->setToolTip(QStringLiteral("Filtrar para ver solo las jugadas de mi lista"));
+	connect(m_btnFilterPlaylist, &QPushButton::clicked, this, &ReplayDock::onToggleCustomPlaylistFilter);
+
+	m_btnLoadPlaylist = new QPushButton(QStringLiteral("▶ Cargar Playlist"), controlPanel);
+	m_btnLoadPlaylist->setToolTip(QStringLiteral("Cargar toda mi playlist continua para emitir en secuencia"));
+	m_btnLoadPlaylist->setStyleSheet(QStringLiteral("QPushButton { background-color: #0277bd; color: white; font-weight: bold; }"));
+	connect(m_btnLoadPlaylist, &QPushButton::clicked, this, &ReplayDock::onLoadCustomPlaylist);
+
+	m_btnClearPlaylist = new QPushButton(QStringLiteral("Limpiar PL"), controlPanel);
+	connect(m_btnClearPlaylist, &QPushButton::clicked, this, &ReplayDock::onClearCustomPlaylist);
+
+	m_btnHalftimeSummary = new QPushButton(QStringLiteral("Resumen Medio Tiempo"), controlPanel);
+	m_btnHalftimeSummary->setStyleSheet(QStringLiteral("QPushButton { background-color: #4527a0; color: white; font-weight: bold; }"));
+	connect(m_btnHalftimeSummary, &QPushButton::clicked, this, &ReplayDock::onHalftimeSummaryClicked);
+
+	plBar->addWidget(m_btnAddToPlaylist);
+	plBar->addWidget(m_btnFilterPlaylist);
+	plBar->addWidget(m_btnLoadPlaylist);
+	plBar->addWidget(m_btnClearPlaylist);
+	plBar->addStretch(1);
+	plBar->addWidget(m_btnHalftimeSummary);
+
+	controlLayout->addLayout(plBar);
+
+	// Grupo de Control de Decks y Reproducción
+	QGroupBox *deckGroup = new QGroupBox(QStringLiteral("Control de Emisión (Double Deck A/B)"), controlPanel);
 	QVBoxLayout *deckLayout = new QVBoxLayout(deckGroup);
 	deckLayout->setContentsMargins(4, 4, 4, 4);
 	deckLayout->setSpacing(3);
 
-	// Fila 1: Pestañas de Deck y Ángulos Multi-Cámara
-	QHBoxLayout *deckAndAngleRow = new QHBoxLayout();
-	deckAndAngleRow->setSpacing(6);
+	// Pestañas de Deck y Estado
+	QHBoxLayout *deckRow = new QHBoxLayout();
+	deckRow->setSpacing(6);
 
 	m_btnSelectDeckA = new QPushButton(QStringLiteral("DECK A (REPLAY)"), deckGroup);
 	m_btnSelectDeckA->setCheckable(true);
@@ -273,23 +304,28 @@ void ReplayDock::setupUi()
 	deckBtnGroup->addButton(m_btnSelectDeckB, 1);
 	connect(deckBtnGroup, &QButtonGroup::idClicked, this, &ReplayDock::onDeckTabChanged);
 
-	deckAndAngleRow->addWidget(m_btnSelectDeckA);
-	deckAndAngleRow->addWidget(m_lblDeckAStatus);
-	deckAndAngleRow->addSpacing(10);
-	deckAndAngleRow->addWidget(m_btnSelectDeckB);
-	deckAndAngleRow->addWidget(m_lblDeckBStatus);
-	deckAndAngleRow->addSpacing(15);
+	deckRow->addWidget(m_btnSelectDeckA);
+	deckRow->addWidget(m_lblDeckAStatus);
+	deckRow->addSpacing(12);
+	deckRow->addWidget(m_btnSelectDeckB);
+	deckRow->addWidget(m_lblDeckBStatus);
+	deckRow->addStretch(1);
 
-	QLabel *lblAnglesTitle = new QLabel(QStringLiteral("Ángulos:"), deckGroup);
-	deckAndAngleRow->addWidget(lblAnglesTitle);
+	deckLayout->addLayout(deckRow);
+
+	// Ángulos de Cámara Sincronizados
+	QHBoxLayout *angleRow = new QHBoxLayout();
+	angleRow->setSpacing(4);
+	QLabel *lblAnglesTitle = new QLabel(QStringLiteral("Ángulos en Vivo:"), deckGroup);
+	angleRow->addWidget(lblAnglesTitle);
 	m_angleLayout = new QHBoxLayout();
 	m_angleLayout->setSpacing(3);
-	deckAndAngleRow->addLayout(m_angleLayout);
-	deckAndAngleRow->addStretch(1);
+	angleRow->addLayout(m_angleLayout);
+	angleRow->addStretch(1);
 
-	deckLayout->addLayout(deckAndAngleRow);
+	deckLayout->addLayout(angleRow);
 
-	// Fila 2: Título del Clip y Timeline
+	// Título del clip actual y reloj
 	QHBoxLayout *clipInfoBar = new QHBoxLayout();
 	clipInfoBar->setSpacing(6);
 	m_lblCurrentClipTitle = new QLabel(QStringLiteral("Sin clip cargado"), deckGroup);
@@ -300,6 +336,7 @@ void ReplayDock::setupUi()
 	clipInfoBar->addWidget(m_lblTime);
 	deckLayout->addLayout(clipInfoBar);
 
+	// Timeline Scrubbing Slider
 	m_sliderTimeline = new QSlider(Qt::Horizontal, deckGroup);
 	m_sliderTimeline->setRange(0, 1000);
 	m_sliderTimeline->setValue(0);
@@ -307,9 +344,9 @@ void ReplayDock::setupUi()
 	connect(m_sliderTimeline, &QSlider::sliderReleased, this, &ReplayDock::onTimelineSliderReleased);
 	deckLayout->addWidget(m_sliderTimeline);
 
-	// Fila 3: Transporte, Velocidad y Botones de Emisión
-	QHBoxLayout *transportBar = new QHBoxLayout();
-	transportBar->setSpacing(3);
+	// Transporte: Frame Back, Play, Frame Fwd, Stop
+	QHBoxLayout *transportRow = new QHBoxLayout();
+	transportRow->setSpacing(3);
 
 	m_btnStepBack = new QPushButton(QStringLiteral("[-1 Frame]"), deckGroup);
 	connect(m_btnStepBack, &QPushButton::clicked, this, &ReplayDock::onStepFrameBack);
@@ -324,14 +361,14 @@ void ReplayDock::setupUi()
 	m_btnStop = new QPushButton(QStringLiteral("STOP"), deckGroup);
 	connect(m_btnStop, &QPushButton::clicked, this, &ReplayDock::onStopClicked);
 
-	transportBar->addWidget(m_btnStepBack);
-	transportBar->addWidget(m_btnPlayPause);
-	transportBar->addWidget(m_btnStepFwd);
-	transportBar->addWidget(m_btnStop);
-	transportBar->addSpacing(10);
+	transportRow->addWidget(m_btnStepBack);
+	transportRow->addWidget(m_btnPlayPause);
+	transportRow->addWidget(m_btnStepFwd);
+	transportRow->addWidget(m_btnStop);
+	transportRow->addSpacing(8);
 
-	// Velocidad compacta
-	QLabel *lblSpeed = new QLabel(QStringLiteral("Velocidad:"), deckGroup);
+	// Control de Velocidad
+	QLabel *lblSpeed = new QLabel(QStringLiteral("Vel:"), deckGroup);
 	m_sliderSpeed = new QSlider(Qt::Horizontal, deckGroup);
 	m_sliderSpeed->setRange(0, 100);
 	m_sliderSpeed->setValue(100);
@@ -349,51 +386,71 @@ void ReplayDock::setupUi()
 	connect(m_btnSpeed75, &QPushButton::clicked, this, [this]() { onSpeedQuickBtn(75); });
 	connect(m_btnSpeed100, &QPushButton::clicked, this, [this]() { onSpeedQuickBtn(100); });
 
-	transportBar->addWidget(lblSpeed);
-	transportBar->addWidget(m_sliderSpeed, 1);
-	transportBar->addWidget(m_lblSpeedVal);
-	transportBar->addWidget(m_btnSpeed25);
-	transportBar->addWidget(m_btnSpeed50);
-	transportBar->addWidget(m_btnSpeed75);
-	transportBar->addWidget(m_btnSpeed100);
-	transportBar->addSpacing(10);
+	transportRow->addWidget(lblSpeed);
+	transportRow->addWidget(m_sliderSpeed, 1);
+	transportRow->addWidget(m_lblSpeedVal);
+	transportRow->addWidget(m_btnSpeed25);
+	transportRow->addWidget(m_btnSpeed50);
+	transportRow->addWidget(m_btnSpeed75);
+	transportRow->addWidget(m_btnSpeed100);
 
-	// Emisión
+	deckLayout->addLayout(transportRow);
+
+	// Botones de Emisión (Preview y Take)
+	QHBoxLayout *emissionRow = new QHBoxLayout();
+	emissionRow->setSpacing(6);
+
 	m_btnSendPreview = new QPushButton(QStringLiteral("VER EN PREVIEW"), deckGroup);
-	m_btnSendPreview->setStyleSheet(QStringLiteral("QPushButton { background-color: #e65100; color: white; font-weight: bold; padding: 3px 8px; } QPushButton:hover { background-color: #f57c00; }"));
+	m_btnSendPreview->setStyleSheet(QStringLiteral("QPushButton { background-color: #e65100; color: white; font-weight: bold; padding: 4px 10px; } QPushButton:hover { background-color: #f57c00; }"));
 	connect(m_btnSendPreview, &QPushButton::clicked, this, &ReplayDock::onSendPreviewClicked);
 
 	m_btnTakeProgram = new QPushButton(QStringLiteral("ENVIAR A PROGRAMA (TAKE)"), deckGroup);
-	m_btnTakeProgram->setStyleSheet(QStringLiteral("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; padding: 4px 10px; } QPushButton:hover { background-color: #388e3c; }"));
+	m_btnTakeProgram->setStyleSheet(QStringLiteral("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; padding: 4px 12px; } QPushButton:hover { background-color: #388e3c; }"));
 	connect(m_btnTakeProgram, &QPushButton::clicked, this, &ReplayDock::onTakeProgramClicked);
 
-	transportBar->addWidget(m_btnSendPreview);
-	transportBar->addWidget(m_btnTakeProgram);
+	emissionRow->addWidget(m_btnSendPreview, 1);
+	emissionRow->addWidget(m_btnTakeProgram, 1);
 
-	deckLayout->addLayout(transportBar);
-	mainLayout->addWidget(deckGroup);
+	deckLayout->addLayout(emissionRow);
+	controlLayout->addWidget(deckGroup);
 
-	// -------------------------------------------------------------------------
-	// 6. Barra de Estado Compacta
-	// -------------------------------------------------------------------------
-	m_lblStatus = new QLabel(QStringLiteral("Plugin listo."), mainWidget);
+	// Barra de Estado
+	m_lblStatus = new QLabel(QStringLiteral("Plugin listo."), controlPanel);
 	m_lblStatus->setStyleSheet(QStringLiteral("color: #9e9e9e; font-size: 8.5pt;"));
-	mainLayout->addWidget(m_lblStatus);
+	controlLayout->addWidget(m_lblStatus);
 
+	// Agregar paneles al Splitter
+	m_mainSplitter->addWidget(videoPanel);
+	m_mainSplitter->addWidget(controlPanel);
+
+	// Proporción inicial equilibrada
+	m_mainSplitter->setStretchFactor(0, 1);
+	m_mainSplitter->setStretchFactor(1, 1);
+
+	rootLayout->addWidget(m_mainSplitter, 1);
 	setWidget(mainWidget);
+}
+
+void ReplayDock::onToggleOrientation()
+{
+	m_isHorizontalLayout = !m_isHorizontalLayout;
+	m_mainSplitter->setOrientation(m_isHorizontalLayout ? Qt::Horizontal : Qt::Vertical);
+	m_btnToggleOrientation->setText(m_isHorizontalLayout ? QStringLiteral("⬌ Lado a Lado") : QStringLiteral("⬍ Apilado"));
+	saveSettings();
 }
 
 void ReplayDock::setupStyles()
 {
 	setStyleSheet(QStringLiteral(
-		"QPushButton { padding: 2px 6px; font-size: 9pt; }"
-		"QComboBox { padding: 2px 4px; font-size: 9pt; }"
-		"QLineEdit { padding: 2px 4px; font-size: 9pt; }"
+		"QPushButton { padding: 2px 5px; font-size: 9pt; }"
+		"QComboBox { padding: 2px 3px; font-size: 9pt; }"
+		"QLineEdit { padding: 2px 3px; font-size: 9pt; }"
 		"QLabel { font-size: 9pt; }"
-		"QGroupBox { font-size: 9pt; font-weight: bold; margin-top: 4px; padding-top: 6px; }"
+		"QGroupBox { font-size: 9pt; font-weight: bold; margin-top: 3px; padding-top: 5px; }"
 		"QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
 		"QTableWidget { gridline-color: #424242; font-size: 9pt; }"
-		"QTableWidget::item:selected { background-color: #1976d2; color: white; }"));
+		"QTableWidget::item:selected { background-color: #1976d2; color: white; }"
+		"QSplitter::handle { background-color: #424242; }"));
 }
 
 // ===========================================================================
@@ -416,6 +473,20 @@ void ReplayDock::loadSettings()
 	if (liveScene && *liveScene) {
 		m_engine.setLiveScene(QString::fromUtf8(liveScene));
 	}
+
+	const char *horiz = config_get_string(cfg, kConfigSection, "HorizontalLayout");
+	if (horiz) {
+		m_isHorizontalLayout = (std::strcmp(horiz, "true") == 0);
+		if (m_mainSplitter)
+			m_mainSplitter->setOrientation(m_isHorizontalLayout ? Qt::Horizontal : Qt::Vertical);
+		if (m_btnToggleOrientation)
+			m_btnToggleOrientation->setText(m_isHorizontalLayout ? QStringLiteral("⬌ Lado a Lado") : QStringLiteral("⬍ Apilado"));
+	}
+
+	const char *splitState = config_get_string(cfg, kConfigSection, "SplitterState");
+	if (splitState && m_mainSplitter && *splitState) {
+		m_mainSplitter->restoreState(QByteArray::fromBase64(splitState));
+	}
 }
 
 void ReplayDock::saveSettings()
@@ -426,6 +497,10 @@ void ReplayDock::saveSettings()
 
 	config_set_string(cfg, kConfigSection, "ReplayFolder", m_txtFolder->text().toUtf8().constData());
 	config_set_string(cfg, kConfigSection, "LiveScene", m_engine.liveScene().toUtf8().constData());
+	config_set_string(cfg, kConfigSection, "HorizontalLayout", m_isHorizontalLayout ? "true" : "false");
+	if (m_mainSplitter) {
+		config_set_string(cfg, kConfigSection, "SplitterState", m_mainSplitter->saveState().toBase64().constData());
+	}
 	config_save(cfg);
 }
 
@@ -646,7 +721,6 @@ void ReplayDock::onClipClicked(int row, int /*col*/)
 
 void ReplayDock::onClipDoubleClicked(int row, int col)
 {
-	// Doble clic: si hay selección múltiple, carga como Playlist
 	const QModelIndexList selRows = m_tableClips->selectionModel()->selectedRows();
 	if (selRows.size() > 1) {
 		ClipList playlist;
