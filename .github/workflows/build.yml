@@ -57,10 +57,10 @@ jobs:
             -DOBS_CMAKE_VERSION:STRING=3.0.0 `
             -DOBS_VERSION_OVERRIDE:STRING="$env:OBS_VERSION" `
             -DENABLE_PLUGINS:BOOL=OFF `
-            -DENABLE_FRONTEND:BOOL=OFF `
-            -DENABLE_UI:BOOL=OFF `
             -DENABLE_SCRIPTING:BOOL=OFF `
-            -DENABLE_BROWSER:BOOL=OFF
+            -DENABLE_BROWSER:BOOL=OFF `
+            -DENABLE_AJA:BOOL=OFF `
+            -DENABLE_DECKLINK:BOOL=OFF
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Compilar libobs + obs-frontend-api
@@ -76,6 +76,9 @@ jobs:
       - name: Localizar dependencias precompiladas
         id: deps
         run: |
+          Write-Host "Contenido de obs-studio/.deps:"
+          Get-ChildItem obs-studio/.deps -Directory | ForEach-Object { Write-Host "  $($_.Name)" }
+
           $prefix = @("$env:GITHUB_WORKSPACE/obs-sdk")
           $prefix += Get-ChildItem obs-studio/.deps -Directory |
                      Where-Object { $_.Name -notlike 'cef*' } |
@@ -86,6 +89,8 @@ jobs:
           if (-not $qtConfig) { Write-Error "No se encontró Qt6Config.cmake en obs-studio/.deps"; exit 1 }
           $qtDir = $qtConfig.DirectoryName -replace '\\', '/'
 
+          Write-Host "CMAKE_PREFIX_PATH = $prefixStr"
+          Write-Host "Qt6_DIR           = $qtDir"
           "prefix=$prefixStr" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "qtdir=$qtDir"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
@@ -111,6 +116,7 @@ jobs:
           Copy-Item "$bin/$env:PLUGIN_NAME.dll" $out
           if (Test-Path "$bin/$env:PLUGIN_NAME.pdb") { Copy-Item "$bin/$env:PLUGIN_NAME.pdb" $out }
           Copy-Item plugin/README.md package/ -ErrorAction SilentlyContinue
+          Get-ChildItem -Recurse package | ForEach-Object { Write-Host $_.FullName }
           Compress-Archive -Path package/* -DestinationPath "$env:PLUGIN_NAME-windows-x64.zip" -Force
 
       - name: Publicar artefacto (DLL lista para OBS)
@@ -119,3 +125,9 @@ jobs:
           name: ${{ env.PLUGIN_NAME }}-windows-x64-obs${{ env.OBS_VERSION }}
           path: package/
           if-no-files-found: error
+
+      - name: Publicar release (solo tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PLUGIN_NAME }}-windows-x64.zip
