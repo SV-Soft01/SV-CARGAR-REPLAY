@@ -377,7 +377,7 @@ void ReplayDock::setupStyles()
 // ===========================================================================
 void ReplayDock::loadSettings()
 {
-	config_t *cfg = obs_frontend_get_global_config();
+	config_t *cfg = obs_frontend_get_app_config();
 	if (!cfg)
 		return;
 
@@ -396,7 +396,7 @@ void ReplayDock::loadSettings()
 
 void ReplayDock::saveSettings()
 {
-	config_t *cfg = obs_frontend_get_global_config();
+	config_t *cfg = obs_frontend_get_app_config();
 	if (!cfg)
 		return;
 

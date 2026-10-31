@@ -5,6 +5,7 @@
 #include <obs-frontend-api.h>
 #include <util/base.h>
 
+#include <QAction>
 #include <QMainWindow>
 #include <QPointer>
 
@@ -12,6 +13,8 @@ OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 namespace {
+
+constexpr const char *kDockId = "obs_basketball_replay_dock";
 
 QPointer<bbr::ReplayDock> s_dock;
 
@@ -40,8 +43,21 @@ MODULE_EXPORT bool obs_module_load(void)
 	}
 
 	s_dock = new bbr::ReplayDock(mainWindow);
-	obs_frontend_add_dock(s_dock);
+	obs_frontend_add_custom_qdock(kDockId, s_dock);
 	obs_frontend_add_event_callback(onFrontendEvent, nullptr);
+
+	QAction *toolsAction = static_cast<QAction *>(obs_frontend_add_tools_menu_qaction("Basketball Replay A/B"));
+	if (toolsAction) {
+		QObject::connect(toolsAction, &QAction::triggered, [dock = s_dock]() {
+			if (dock) {
+				dock->setVisible(!dock->isVisible());
+				if (dock->isVisible()) {
+					dock->raise();
+					dock->activateWindow();
+				}
+			}
+		});
+	}
 
 	blog(LOG_INFO, "%s Plugin cargado exitosamente.", bbr::kLogPrefix);
 	return true;
@@ -51,6 +67,7 @@ MODULE_EXPORT void obs_module_unload(void)
 {
 	blog(LOG_INFO, "%s Descargando obs-basketball-replay...", bbr::kLogPrefix);
 	obs_frontend_remove_event_callback(onFrontendEvent, nullptr);
+	obs_frontend_remove_dock(kDockId);
 	if (s_dock) {
 		delete s_dock;
 		s_dock = nullptr;
