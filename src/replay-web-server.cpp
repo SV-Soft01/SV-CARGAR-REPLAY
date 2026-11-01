@@ -735,8 +735,8 @@ QByteArray ReplayWebServer::buildStatusJson() const
 	QJsonArray clipsArr;
 	const ClipList allClips = m_scanner.clips();
 	// Mostrar los clips más recientes primero (hasta 50)
-	const int start = std::max(0, allClips.size() - 50);
-	for (int i = allClips.size() - 1; i >= start; --i) {
+	const qsizetype start = std::max<qsizetype>(0, allClips.size() - 50);
+	for (qsizetype i = allClips.size() - 1; i >= start; --i) {
 		const ClipInfo &c = allClips[i];
 		const ClipTags tags = m_tagStore.get(c.fileName);
 

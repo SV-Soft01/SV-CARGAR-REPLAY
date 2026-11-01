@@ -78,9 +78,6 @@ void ReplayDock::init()
 	updateDeckStatusBadges();
 	updateTransportUi(m_activeDeckTab);
 }
-	updateDeckStatusBadges();
-	updateTransportUi(m_activeDeckTab);
-}
 
 void ReplayDock::setupUi()
 {
