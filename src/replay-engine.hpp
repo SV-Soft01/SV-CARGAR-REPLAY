@@ -111,6 +111,7 @@ private:
 		qint64 seekMs = 0;      // absoluto, o "desde el final" si alignEnd
 		bool alignEnd = false;
 		bool pauseAfter = false;
+		bool isSpeedChange = false;
 		QElapsedTimer timer;
 	};
 
@@ -149,11 +150,12 @@ private:
 	void detachDeck(Deck &d);
 
 	void applyMediaSettings(obs_source_t *src, const QString &path, int speed);
-	void beginPending(Deck &d, qint64 seekMs, bool alignEnd, bool pauseAfter);
+	void beginPending(Deck &d, qint64 seekMs, bool alignEnd, bool pauseAfter, bool isSpeedChange = false);
 	bool loadInternal(Deck &d, const ClipInfo &clip, bool autoplay, qint64 seekMs, bool alignEnd);
 	void processPending(Deck &d, obs_source_t *src);
 	void handleEnded(Deck &d);
 	void applySpeed(int deck);
+	void prepareAndPlayFromZero(int deck);
 	void onTick();
 
 	std::array<Deck, kDeckCount> m_decks;

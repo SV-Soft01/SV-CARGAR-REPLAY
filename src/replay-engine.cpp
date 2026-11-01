@@ -14,7 +14,7 @@ namespace bbr {
 
 namespace {
 
-constexpr int kTickMs = 40;
+constexpr int kTickMs = 15;
 constexpr int kSpeedDebounceMs = 200;
 constexpr qint64 kPendingFallbackMs = 2500;
 constexpr qint64 kPendingTimeoutMs = 10000;
@@ -158,7 +158,20 @@ void ReplayEngine::handleFrontendEvent(int event)
 		setReady(false);
 		break;
 
-	case OBS_FRONTEND_EVENT_SCENE_CHANGED:
+	case OBS_FRONTEND_EVENT_SCENE_CHANGED: {
+		const int air = deckOnAir();
+		if (air >= 0) {
+			if (m_lastAirDeck != air) {
+				m_lastAirDeck = air;
+				prepareAndPlayFromZero(air);
+			}
+		} else {
+			m_lastAirDeck = -1;
+		}
+		emit sceneStateChanged();
+		break;
+	}
+
 	case OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED:
 	case OBS_FRONTEND_EVENT_STUDIO_MODE_ENABLED:
 	case OBS_FRONTEND_EVENT_STUDIO_MODE_DISABLED:
@@ -352,7 +365,7 @@ void ReplayEngine::applyMediaSettings(obs_source_t *src, const QString &path, in
 	obs_source_update(src, s.get());
 }
 
-void ReplayEngine::beginPending(Deck &d, qint64 seekMs, bool alignEnd, bool pauseAfter)
+void ReplayEngine::beginPending(Deck &d, qint64 seekMs, bool alignEnd, bool pauseAfter, bool isSpeedChange)
 {
 	// Importante: se toma la "foto" del contador ANTES de disparar la apertura.
 	d.pending.active = true;
@@ -360,6 +373,7 @@ void ReplayEngine::beginPending(Deck &d, qint64 seekMs, bool alignEnd, bool paus
 	d.pending.seekMs = std::max<qint64>(0, seekMs);
 	d.pending.alignEnd = alignEnd;
 	d.pending.pauseAfter = pauseAfter;
+	d.pending.isSpeedChange = isSpeedChange;
 	d.pending.timer.start();
 }
 
@@ -480,20 +494,7 @@ void ReplayEngine::onTick()
 	if (air >= 0) {
 		if (m_lastAirDeck != air) {
 			m_lastAirDeck = air;
-			// Cuando una casilla entra al aire (Programa), jamás puede quedarse en pausa
-			Deck &dAir = m_decks[air];
-			if (dAir.desiredSpeed <= 0)
-				dAir.desiredSpeed = (dAir.speed > 0) ? dAir.speed : 100;
-			dAir.pausedByZero = false;
-			if (dAir.pending.active)
-				dAir.pending.pauseAfter = false;
-			SourcePtr srcAir = peekSource(dAir);
-			if (srcAir) {
-				const obs_media_state st = obs_source_media_get_state(srcAir.get());
-				if (st == OBS_MEDIA_STATE_PAUSED || st == OBS_MEDIA_STATE_STOPPED) {
-					obs_source_media_play_pause(srcAir.get(), false);
-				}
-			}
+			prepareAndPlayFromZero(air);
 		}
 	} else {
 		m_lastAirDeck = -1;
@@ -530,8 +531,15 @@ void ReplayEngine::processPending(Deck &d, obs_source_t *src)
 	const bool running = st == OBS_MEDIA_STATE_PLAYING || st == OBS_MEDIA_STATE_PAUSED;
 	const qint64 elapsed = d.pending.timer.elapsed();
 
-	// Si el medio ya está abierto y corriendo con duración, está listo de inmediato (sin esperar 2.5s)
-	const bool ready = (running && dur > 0) || started || (elapsed > 350);
+	// Si es cambio de velocidad, esperar rigurosamente a que el nuevo reproductor emita started
+	// para no tomar como válido el estado running del reproductor anterior antes de recargar.
+	bool ready = false;
+	if (d.pending.isSpeedChange) {
+		ready = started || (elapsed > 400);
+	} else {
+		ready = (running && dur > 0) || started || (elapsed > 350);
+	}
+
 	if (!ready) {
 		if (elapsed > kPendingTimeoutMs || st == OBS_MEDIA_STATE_ERROR) {
 			d.pending.active = false;
@@ -547,10 +555,12 @@ void ReplayEngine::processPending(Deck &d, obs_source_t *src)
 	target = std::clamp<qint64>(target, 0, std::max<qint64>(0, dur - 1));
 
 	if (d.pending.pauseAfter) {
-		obs_source_media_play_pause(src, true);
-		obs_source_media_set_time(src, target); // cue exacto (incluso en 0)
-	} else if (target > 0) {
 		obs_source_media_set_time(src, target);
+		obs_source_media_play_pause(src, true);
+	} else {
+		if (target > 0)
+			obs_source_media_set_time(src, target);
+		obs_source_media_play_pause(src, false);
 	}
 
 	d.pending.active = false;
@@ -831,7 +841,10 @@ void ReplayEngine::applySpeed(int deck)
 	d.speed = d.desiredSpeed;
 	d.resumeAfterSpeed = false;
 
-	// Actualizar velocidad directamente en la configuración de la fuente para evitar recrear demuxer completo
+	// Iniciar pending para buscar exactamente en t una vez que OBS haya recreado el decodificador con la nueva velocidad
+	beginPending(d, t, false, !wasPlaying, true);
+
+	// Actualizar velocidad en la configuración de la fuente ffmpeg de OBS
 	obs_data_t *settings = obs_source_get_settings(src.get());
 	if (settings) {
 		obs_data_set_int(settings, "speed_percent", std::clamp(d.speed, 1, 200));
@@ -839,18 +852,38 @@ void ReplayEngine::applySpeed(int deck)
 		obs_data_release(settings);
 	}
 
-	// Restaurar posición y estado de reproducción inmediatamente para evitar parpadeos o saltos a cuadro 0
-	if (t > 0) {
-		obs_source_media_set_time(src.get(), t);
-	}
+	emit deckChanged(deck);
+}
 
-	if (!wasPlaying) {
-		obs_source_media_play_pause(src.get(), true);
-		if (t >= 0)
-			obs_source_media_set_time(src.get(), t);
-	} else {
-		obs_source_media_play_pause(src.get(), false);
+void ReplayEngine::prepareAndPlayFromZero(int deck)
+{
+	if (!validDeck(deck))
+		return;
+	Deck &d = m_decks[deck];
+	if (!d.clip.isValid())
+		return;
+
+	SourcePtr src = peekSource(d);
+	if (!src)
+		src = resolveSource(d, true);
+	if (!src)
+		return;
+
+	// Obligatorio: en Programa nunca puede arrancar en pausa ni en velocidad 0
+	if (d.desiredSpeed <= 0)
+		d.desiredSpeed = (d.speed > 0) ? d.speed : 100;
+	d.pausedByZero = false;
+	d.stepPos = -1.0;
+	d.pending.active = false; // Cancelar cualquier retraso previo
+
+	const obs_media_state st = obs_source_media_get_state(src.get());
+	if (st == OBS_MEDIA_STATE_ENDED || st == OBS_MEDIA_STATE_STOPPED) {
+		obs_source_media_restart(src.get());
 	}
+	// Siempre comenzar rigurosamente desde el milisegundo 0 (inicio exacto)
+	obs_source_media_set_time(src.get(), 0);
+	// Reproducir de inmediato de forma fluida
+	obs_source_media_play_pause(src.get(), false);
 
 	emit deckChanged(deck);
 }
@@ -882,29 +915,27 @@ void ReplayEngine::takeToProgram(int deck)
 		return;
 	}
 
-	SourcePtr src = resolveSource(d, true);
 	SourcePtr scene = sourceByName(d.sceneName);
-	if (!src || !scene || !obs_source_is_scene(scene.get())) {
+	if (!scene || !obs_source_is_scene(scene.get())) {
 		emit statusMessage(QStringLiteral("No existe la escena \"%1\".").arg(d.sceneName));
 		return;
 	}
 
-	// Obligatorio: la repetición siempre pasa a Programa en reproducción fluida (nunca frisada)
-	if (d.desiredSpeed <= 0)
-		d.desiredSpeed = (d.speed > 0) ? d.speed : 100;
-	d.pausedByZero = false;
-	d.pending.active = false; // Cancelar cualquier retraso pendiente
+	// 1. Preparar y arrancar reproducción desde el cuadro 0 antes del corte
+	prepareAndPlayFromZero(deck);
 
-	const obs_media_state st = obs_source_media_get_state(src.get());
-	if (st == OBS_MEDIA_STATE_ENDED || st == OBS_MEDIA_STATE_STOPPED) {
-		obs_source_media_restart(src.get());
+	// 2. Disparar transición a Programa en OBS
+	if (!isOnAir(deck)) {
+		m_lastAirDeck = deck;
+		obs_frontend_set_current_scene(scene.get());
 	}
-	obs_source_media_play_pause(src.get(), false);
 
-	if (!isOnAir(deck))
-		obs_frontend_set_current_scene(scene.get()); // Dispara la transición (Stinger)
+	// 3. Reasegurar que el media player continúa corriendo sin pausa
+	SourcePtr src = peekSource(d);
+	if (src) {
+		obs_source_media_play_pause(src.get(), false);
+	}
 
-	obs_source_media_play_pause(src.get(), false);
 	emit deckChanged(deck);
 }
 
