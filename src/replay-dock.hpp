@@ -8,6 +8,7 @@
 #include "clip-scanner.hpp"
 #include "replay-engine.hpp"
 #include "replay-types.hpp"
+#include "replay-web-server.hpp"
 
 #include <QButtonGroup>
 #include <QComboBox>
@@ -74,6 +75,8 @@ private slots:
 	void onReturnLiveClicked();
 	void onLiveSceneComboChanged(int index);
 	void onToggleOrientation();
+	void onToggleMiniMode();
+	void onShowMobileUrl();
 
 	// Multi-cámara instantánea
 	void onCameraSwitchClicked(int camIndex);
@@ -98,6 +101,7 @@ private:
 	ClipScanner m_scanner;
 	TagStore m_tagStore;
 	ReplayEngine m_engine;
+	ReplayWebServer m_webServer;
 
 	// Datos en memoria
 	ClipList m_allClips;
@@ -109,9 +113,19 @@ private:
 	bool m_isHorizontalLayout = true;
 	bool m_isScrubbing = false;
 
-	// Layout dinámico con Splitter
+	// Layout dinámico con Splitter y Modo Mini
 	QSplitter *m_mainSplitter = nullptr;
 	QPushButton *m_btnToggleOrientation = nullptr;
+	QPushButton *m_btnMiniMode = nullptr;
+	QPushButton *m_btnMobileUrl = nullptr;
+	bool m_isMiniMode = false;
+
+	// Barra Compacta (Modo Mini)
+	QWidget *m_miniBar = nullptr;
+	QLabel *m_lblMiniDeckStatus = nullptr;
+	QPushButton *m_btnMiniTake = nullptr;
+	QPushButton *m_btnMiniLive = nullptr;
+	QPushButton *m_btnMiniExpand = nullptr;
 
 	// Widgets UI - Barra Superior
 	QLineEdit *m_txtFolder = nullptr;

@@ -399,8 +399,11 @@ void ClipScanner::requestScan(bool force)
 void ClipScanner::onWorkerFinished(const QString &folder, bool changed, const bbr::ClipList &clips)
 {
 	m_busy = false;
-	if (folder == m_folder && changed)
-		emit clipsUpdated(clips);
+	if (folder == m_folder) {
+		m_clips = clips;
+		if (changed)
+			emit clipsUpdated(clips);
+	}
 
 	if (m_again) {
 		const bool f = m_againForce;

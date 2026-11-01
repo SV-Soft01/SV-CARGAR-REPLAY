@@ -46,6 +46,7 @@ public:
 
 	void start();
 	void stop();
+	ClipList clips() const { return m_clips; }
 
 public slots:
 	void requestScan(bool force = false);
@@ -64,6 +65,7 @@ private:
 	QTimer m_debounce;
 	QFileSystemWatcher m_watcher;
 	QString m_folder;
+	ClipList m_clips;
 	bool m_busy = false;
 	bool m_again = false;
 	bool m_againForce = false;

@@ -30,7 +30,7 @@ set(CMAKE_AUTORCC OFF)
 # ---------------------------------------------------------------------------
 find_package(libobs REQUIRED)
 find_package(obs-frontend-api REQUIRED)
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Widgets Network)
 
 set(PLUGIN_SOURCES
     src/plugin-main.cpp
@@ -40,7 +40,9 @@ set(PLUGIN_SOURCES
     src/replay-engine.hpp
     src/replay-engine.cpp
     src/replay-dock.hpp
-    src/replay-dock.cpp)
+    src/replay-dock.cpp
+    src/replay-web-server.hpp
+    src/replay-web-server.cpp)
 
 add_library(${PROJECT_NAME} MODULE ${PLUGIN_SOURCES})
 
@@ -63,7 +65,7 @@ else()
   target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
 endif()
 
-target_link_libraries(${PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets)
+target_link_libraries(${PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets Qt6::Network)
 
 set_target_properties(
   ${PROJECT_NAME}

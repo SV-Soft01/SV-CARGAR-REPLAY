@@ -9,6 +9,7 @@
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QMenu>
+#include <QMessageBox>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSplitter>
@@ -25,7 +26,8 @@ inline constexpr const char *kConfigSection = "BasketballReplay";
 
 } // namespace
 
-ReplayDock::ReplayDock(QWidget *parent) : QDockWidget(parent)
+ReplayDock::ReplayDock(QWidget *parent)
+	: QDockWidget(parent), m_webServer(m_engine, m_scanner, m_tagStore, this)
 {
 	setObjectName(QStringLiteral("ObsBasketballReplayDock"));
 	setWindowTitle(QStringLiteral("Basketball Replay A/B"));
@@ -42,6 +44,14 @@ ReplayDock::ReplayDock(QWidget *parent) : QDockWidget(parent)
 	connect(&m_engine, &ReplayEngine::sceneStateChanged, this, &ReplayDock::onEngineSceneStateChanged);
 	connect(&m_engine, &ReplayEngine::statusMessage, this, &ReplayDock::onEngineStatusMessage);
 
+	// Conexión del servidor web remoto
+	connect(&m_webServer, &ReplayWebServer::clientActionTriggered, this, [this](const QString &action) {
+		m_lblStatus->setText(QStringLiteral("Comando remoto desde celular: %1").arg(action));
+		updateTransportUi(m_activeDeckTab);
+		updateAngleButtons(m_activeDeckTab);
+		updateDeckStatusBadges();
+	});
+
 	// UI Tick timer (para actualizar scrubbing, timeline y reloj a 20 fps)
 	m_uiTimer.setInterval(50);
 	connect(&m_uiTimer, &QTimer::timeout, this, &ReplayDock::onUiTick);
@@ -51,6 +61,7 @@ ReplayDock::ReplayDock(QWidget *parent) : QDockWidget(parent)
 ReplayDock::~ReplayDock()
 {
 	saveSettings();
+	m_webServer.stop();
 	m_uiTimer.stop();
 	m_scanner.stop();
 	m_engine.shutdown();
@@ -63,6 +74,10 @@ void ReplayDock::init()
 	refreshSceneList();
 	m_engine.setReady(true);
 	m_engine.ensureDecks();
+	m_webServer.start(8080);
+	updateDeckStatusBadges();
+	updateTransportUi(m_activeDeckTab);
+}
 	updateDeckStatusBadges();
 	updateTransportUi(m_activeDeckTab);
 }
@@ -77,43 +92,94 @@ void ReplayDock::setupUi()
 	// -------------------------------------------------------------------------
 	// 1. Barra Superior Principal: Carpeta, En Vivo y Cambio de Orientación
 	// -------------------------------------------------------------------------
-	QHBoxLayout *topBar = new QHBoxLayout();
+	QWidget *topBarWidget = new QWidget(mainWidget);
+	QHBoxLayout *topBar = new QHBoxLayout(topBarWidget);
+	topBar->setContentsMargins(0, 0, 0, 0);
 	topBar->setSpacing(3);
 
-	QLabel *lblFolder = new QLabel(QStringLiteral("Carpeta:"), mainWidget);
-	m_txtFolder = new QLineEdit(mainWidget);
+	QLabel *lblFolder = new QLabel(QStringLiteral("Carpeta:"), topBarWidget);
+	m_txtFolder = new QLineEdit(topBarWidget);
 	m_txtFolder->setPlaceholderText(QStringLiteral("Ruta a grabaciones de repetición..."));
 	m_txtFolder->setReadOnly(true);
 
-	m_btnBrowse = new QPushButton(QStringLiteral("Examinar..."), mainWidget);
+	m_btnBrowse = new QPushButton(QStringLiteral("Examinar..."), topBarWidget);
 	connect(m_btnBrowse, &QPushButton::clicked, this, &ReplayDock::onBrowseFolder);
 
-	QLabel *lblLive = new QLabel(QStringLiteral("En Vivo:"), mainWidget);
-	m_comboLiveScene = new QComboBox(mainWidget);
+	QLabel *lblLive = new QLabel(QStringLiteral("En Vivo:"), topBarWidget);
+	m_comboLiveScene = new QComboBox(topBarWidget);
 	connect(m_comboLiveScene, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
 		&ReplayDock::onLiveSceneComboChanged);
 
-	m_btnReturnLive = new QPushButton(QStringLiteral("VOLVER A VIVO"), mainWidget);
+	m_btnReturnLive = new QPushButton(QStringLiteral("VOLVER A VIVO"), topBarWidget);
 	m_btnReturnLive->setObjectName(QStringLiteral("btnReturnLive"));
 	m_btnReturnLive->setStyleSheet(QStringLiteral("QPushButton { background-color: #b71c1c; color: white; font-weight: bold; padding: 3px 8px; border-radius: 3px; } QPushButton:hover { background-color: #d32f2f; }"));
 	connect(m_btnReturnLive, &QPushButton::clicked, this, &ReplayDock::onReturnLiveClicked);
 
-	m_btnToggleOrientation = new QPushButton(m_isHorizontalLayout ? QStringLiteral("⬌ Lado a Lado") : QStringLiteral("⬍ Apilado"), mainWidget);
-	m_btnToggleOrientation->setToolTip(QStringLiteral("Cambiar disposición: Lado a Lado (videos a la izquierda, controles a la derecha) o Apilado (arriba/abajo)"));
+	m_btnToggleOrientation = new QPushButton(m_isHorizontalLayout ? QStringLiteral("⬌ Lado a Lado") : QStringLiteral("⬍ Apilado"), topBarWidget);
+	m_btnToggleOrientation->setToolTip(QStringLiteral("Cambiar disposición: Lado a Lado o Apilado"));
 	m_btnToggleOrientation->setStyleSheet(QStringLiteral("QPushButton { background-color: #37474f; color: white; font-weight: bold; }"));
 	connect(m_btnToggleOrientation, &QPushButton::clicked, this, &ReplayDock::onToggleOrientation);
+
+	m_btnMobileUrl = new QPushButton(QStringLiteral("📱 Celular"), topBarWidget);
+	m_btnMobileUrl->setToolTip(QStringLiteral("Abrir consola remota en el celular o tablet"));
+	m_btnMobileUrl->setStyleSheet(QStringLiteral("QPushButton { background-color: #0277bd; color: white; font-weight: bold; }"));
+	connect(m_btnMobileUrl, &QPushButton::clicked, this, &ReplayDock::onShowMobileUrl);
+
+	m_btnMiniMode = new QPushButton(QStringLiteral("⬍ Modo Mini"), topBarWidget);
+	m_btnMiniMode->setToolTip(QStringLiteral("Colapsar el panel a una barra mínima para despejar la pantalla"));
+	m_btnMiniMode->setStyleSheet(QStringLiteral("QPushButton { background-color: #455a64; color: white; font-weight: bold; }"));
+	connect(m_btnMiniMode, &QPushButton::clicked, this, &ReplayDock::onToggleMiniMode);
 
 	topBar->addWidget(lblFolder);
 	topBar->addWidget(m_txtFolder, 1);
 	topBar->addWidget(m_btnBrowse);
-	topBar->addSpacing(8);
+	topBar->addSpacing(6);
 	topBar->addWidget(lblLive);
 	topBar->addWidget(m_comboLiveScene);
 	topBar->addWidget(m_btnReturnLive);
-	topBar->addSpacing(6);
+	topBar->addSpacing(4);
 	topBar->addWidget(m_btnToggleOrientation);
+	topBar->addWidget(m_btnMobileUrl);
+	topBar->addWidget(m_btnMiniMode);
 
-	rootLayout->addLayout(topBar);
+	rootLayout->addWidget(topBarWidget);
+
+	// -------------------------------------------------------------------------
+	// Barra Compacta (Modo Mini para despejar la pantalla)
+	// -------------------------------------------------------------------------
+	m_miniBar = new QWidget(mainWidget);
+	QHBoxLayout *miniLayout = new QHBoxLayout(m_miniBar);
+	miniLayout->setContentsMargins(2, 2, 2, 2);
+	miniLayout->setSpacing(5);
+
+	m_btnMiniExpand = new QPushButton(QStringLiteral("⬍ Expandir"), m_miniBar);
+	m_btnMiniExpand->setStyleSheet(QStringLiteral("QPushButton { background-color: #37474f; color: white; font-weight: bold; padding: 3px 8px; }"));
+	connect(m_btnMiniExpand, &QPushButton::clicked, this, &ReplayDock::onToggleMiniMode);
+
+	m_lblMiniDeckStatus = new QLabel(QStringLiteral("DECK A [LISTO]"), m_miniBar);
+	m_lblMiniDeckStatus->setStyleSheet(QStringLiteral("font-weight: bold; color: #81c784; font-size: 9.5pt;"));
+
+	m_btnMiniTake = new QPushButton(QStringLiteral("🚀 TAKE (PROGRAMA)"), m_miniBar);
+	m_btnMiniTake->setStyleSheet(QStringLiteral("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; padding: 4px 14px; } QPushButton:hover { background-color: #388e3c; }"));
+	connect(m_btnMiniTake, &QPushButton::clicked, this, &ReplayDock::onTakeProgramClicked);
+
+	m_btnMiniLive = new QPushButton(QStringLiteral("🔴 VIVO"), m_miniBar);
+	m_btnMiniLive->setStyleSheet(QStringLiteral("QPushButton { background-color: #b71c1c; color: white; font-weight: bold; padding: 4px 10px; }"));
+	connect(m_btnMiniLive, &QPushButton::clicked, this, &ReplayDock::onReturnLiveClicked);
+
+	QPushButton *btnMiniMobile = new QPushButton(QStringLiteral("📱 Celular"), m_miniBar);
+	btnMiniMobile->setStyleSheet(QStringLiteral("QPushButton { background-color: #0277bd; color: white; font-weight: bold; padding: 3px 8px; }"));
+	connect(btnMiniMobile, &QPushButton::clicked, this, &ReplayDock::onShowMobileUrl);
+
+	miniLayout->addWidget(m_btnMiniExpand);
+	miniLayout->addWidget(m_lblMiniDeckStatus);
+	miniLayout->addStretch(1);
+	miniLayout->addWidget(btnMiniMobile);
+	miniLayout->addWidget(m_btnMiniTake);
+	miniLayout->addWidget(m_btnMiniLive);
+	m_miniBar->setVisible(false);
+
+	rootLayout->addWidget(m_miniBar);
 
 	// -------------------------------------------------------------------------
 	// 2. QSplitter Adaptable: Panel de Videos y Panel de Controles
@@ -437,6 +503,38 @@ void ReplayDock::onToggleOrientation()
 	m_mainSplitter->setOrientation(m_isHorizontalLayout ? Qt::Horizontal : Qt::Vertical);
 	m_btnToggleOrientation->setText(m_isHorizontalLayout ? QStringLiteral("⬌ Lado a Lado") : QStringLiteral("⬍ Apilado"));
 	saveSettings();
+}
+
+void ReplayDock::onToggleMiniMode()
+{
+	m_isMiniMode = !m_isMiniMode;
+	m_miniBar->setVisible(m_isMiniMode);
+	m_mainSplitter->setVisible(!m_isMiniMode);
+	if (m_txtFolder && m_txtFolder->parentWidget()) {
+		m_txtFolder->parentWidget()->setVisible(!m_isMiniMode);
+	}
+	if (m_isMiniMode) {
+		setMaximumHeight(65);
+	} else {
+		setMaximumHeight(QWIDGETSIZE_MAX);
+	}
+	updateDeckStatusBadges();
+}
+
+void ReplayDock::onShowMobileUrl()
+{
+	const QString url = m_webServer.serverUrl();
+	QMessageBox msg(this);
+	msg.setWindowTitle(QStringLiteral("Control Remoto Móvil"));
+	msg.setText(QStringLiteral(
+		"<h3>📱 Control Remoto en el Celular</h3>"
+		"<p>Abre esta dirección en el navegador (Safari / Chrome) de tu teléfono:</p>"
+		"<p style='font-size: 15pt; font-weight: bold; color: #1f6feb;'>%1</p>"
+		"<p><b>Consejo:</b> Tu celular y la laptop deben estar en la misma red Wi-Fi "
+		"o puedes activar la <b>Zona Wi-Fi (punto de acceso)</b> de tu celular y conectar la laptop.</p>")
+		.arg(url));
+	msg.setStandardButtons(QMessageBox::Ok);
+	msg.exec();
 }
 
 void ReplayDock::setupStyles()
@@ -1128,6 +1226,16 @@ void ReplayDock::updateDeckStatusBadges()
 
 	m_lblDeckAStatus->setText(formatBadge(0));
 	m_lblDeckBStatus->setText(formatBadge(1));
+
+	if (m_lblMiniDeckStatus) {
+		const int air = m_engine.deckOnAir();
+		const QString aStatus = (air == 0) ? QStringLiteral("DECK A [AIRE]") : QStringLiteral("DECK A [LISTO]");
+		const QString bStatus = (air == 1) ? QStringLiteral("DECK B [AIRE]") : QStringLiteral("DECK B [LISTO]");
+		m_lblMiniDeckStatus->setText(QStringLiteral("%1 | %2").arg(aStatus, bStatus));
+	}
+	if (m_btnMobileUrl && m_webServer.isRunning()) {
+		m_btnMobileUrl->setText(QStringLiteral("📱 %1").arg(m_webServer.serverUrl()));
+	}
 }
 
 void ReplayDock::updateTransportUi(int deck)
