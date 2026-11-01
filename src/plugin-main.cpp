@@ -7,6 +7,8 @@
 
 #include <QAction>
 #include <QMainWindow>
+#include <QMenu>
+#include <QMenuBar>
 #include <QPointer>
 
 OBS_DECLARE_MODULE()
@@ -25,6 +27,9 @@ void onFrontendEvent(enum obs_frontend_event event, void * /*private_data*/)
 
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
 		s_dock->init();
+		// Asegurar que sea visible tras cargar la interfaz
+		s_dock->setVisible(true);
+		s_dock->show();
 	} else if (event == OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED) {
 		s_dock->refreshSceneList();
 	}
@@ -46,6 +51,11 @@ MODULE_EXPORT bool obs_module_load(void)
 	obs_frontend_add_custom_qdock(kDockId, s_dock);
 	obs_frontend_add_event_callback(onFrontendEvent, nullptr);
 
+	// Hacer visible el dock
+	s_dock->setVisible(true);
+	s_dock->show();
+
+	// 1. Agregar al menú Herramientas (Tools)
 	QAction *toolsAction = static_cast<QAction *>(obs_frontend_add_tools_menu_qaction("Basketball Replay A/B"));
 	if (toolsAction) {
 		QObject::connect(toolsAction, &QAction::triggered, [dock = s_dock]() {
@@ -57,6 +67,25 @@ MODULE_EXPORT bool obs_module_load(void)
 				}
 			}
 		});
+	}
+
+	// 2. Agregar al menú Paneles (Docks) nativo de OBS
+	if (mainWindow->menuBar()) {
+		QMenu *docksMenu = nullptr;
+		for (QAction *action : mainWindow->menuBar()->actions()) {
+			if (action->menu()) {
+				QString title = action->text().toLower();
+				if (title.contains("dock") || title.contains("panel") || title.contains("paneles")) {
+					docksMenu = action->menu();
+					break;
+				}
+			}
+		}
+		if (docksMenu) {
+			QAction *dockToggleAct = s_dock->toggleViewAction();
+			dockToggleAct->setText(QStringLiteral("Basketball Replay A/B"));
+			docksMenu->addAction(dockToggleAct);
+		}
 	}
 
 	blog(LOG_INFO, "%s Plugin cargado exitosamente.", bbr::kLogPrefix);
